@@ -19,6 +19,7 @@ import (
 	"github.com/home-operations/tuppr/internal/controller/nodeutil"
 	"github.com/home-operations/tuppr/internal/controller/upgradeaudit"
 	"github.com/home-operations/tuppr/internal/metrics"
+	"github.com/home-operations/tuppr/internal/versioncompare"
 )
 
 func (r *Reconciler) processUpgrade(ctx context.Context, kubernetesUpgrade *tupprv1alpha1.KubernetesUpgrade) (ctrl.Result, error) {
@@ -47,7 +48,8 @@ func (r *Reconciler) processUpgrade(ctx context.Context, kubernetesUpgrade *tupp
 			return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
 		}
 		targetVersion := kubernetesUpgrade.Spec.Kubernetes.Version
-		allUpgraded, err := r.areAllNodesUpgraded(ctx, targetVersion)
+		policy := kubernetesUpgrade.Spec.Kubernetes.VersionComparison
+		allUpgraded, err := r.areAllNodesUpgraded(ctx, targetVersion, policy)
 		if err != nil {
 			logger.Error(err, "Failed to re-check nodes after completion")
 			return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
@@ -93,6 +95,7 @@ func (r *Reconciler) processUpgrade(ctx context.Context, kubernetesUpgrade *tupp
 		return r.handleJobStatus(ctx, kubernetesUpgrade, activeJob)
 	}
 	targetVersion := kubernetesUpgrade.Spec.Kubernetes.Version
+	policy := kubernetesUpgrade.Spec.Kubernetes.VersionComparison
 
 	currentVersion, err := r.VersionGetter.GetCurrentKubernetesVersion(ctx)
 	if err == nil {
@@ -104,7 +107,7 @@ func (r *Reconciler) processUpgrade(ctx context.Context, kubernetesUpgrade *tupp
 		}
 	}
 
-	allUpgraded, err := r.areAllNodesUpgraded(ctx, targetVersion)
+	allUpgraded, err := r.areAllNodesUpgraded(ctx, targetVersion, policy)
 	if err != nil {
 		logger.Error(err, "Failed to verify node versions")
 		return ctrl.Result{RequeueAfter: time.Minute}, nil
@@ -116,8 +119,11 @@ func (r *Reconciler) processUpgrade(ctx context.Context, kubernetesUpgrade *tupp
 		if !strings.HasPrefix(currentVersion, "v") {
 			currentVersion = "v" + currentVersion
 		}
-		if currentVersion != targetVersion {
-			logger.V(1).Info("Nodes are updated but API server still reports old version, waiting for propagation")
+		if !versioncompare.Equivalent(currentVersion, targetVersion, policy) {
+			logger.V(1).Info("Nodes are updated but API server still reports old version, waiting for propagation",
+				"current", currentVersion,
+				"target", targetVersion,
+				"comparisonMode", policy.Mode)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
@@ -197,7 +203,8 @@ func (r *Reconciler) startUpgrade(ctx context.Context, kubernetesUpgrade *tupprv
 	logger := log.FromContext(ctx)
 
 	targetVersion := kubernetesUpgrade.Spec.Kubernetes.Version
-	controllerNode, controllerIP, err := r.findControllerNode(ctx, targetVersion)
+	policy := kubernetesUpgrade.Spec.Kubernetes.VersionComparison
+	controllerNode, controllerIP, err := r.findControllerNode(ctx, targetVersion, policy)
 	if err != nil {
 		logger.Error(err, "Failed to find controller node")
 		if err := r.setPhase(ctx, kubernetesUpgrade, tupprv1alpha1.JobPhaseFailed, "", fmt.Sprintf("Failed to find controller node: %s", err.Error())); err != nil {
@@ -230,7 +237,7 @@ func (r *Reconciler) startUpgrade(ctx context.Context, kubernetesUpgrade *tupprv
 	return ctrl.Result{RequeueAfter: time.Second * 30}, nil
 }
 
-func (r *Reconciler) findControllerNode(ctx context.Context, targetVersion string) (string, string, error) {
+func (r *Reconciler) findControllerNode(ctx context.Context, targetVersion string, policy tupprv1alpha1.VersionComparisonSpec) (string, string, error) {
 	nodeList := &corev1.NodeList{}
 	if err := r.List(ctx, nodeList); err != nil {
 		return "", "", fmt.Errorf("failed to list nodes: %w", err)
@@ -245,7 +252,7 @@ func (r *Reconciler) findControllerNode(ctx context.Context, targetVersion strin
 		if err != nil {
 			continue
 		}
-		if node.Status.NodeInfo.KubeletVersion != targetVersion {
+		if !versioncompare.Equivalent(node.Status.NodeInfo.KubeletVersion, targetVersion, policy) {
 			return node.Name, nodeIP, nil
 		}
 		if fallbackName == "" {
@@ -260,7 +267,7 @@ func (r *Reconciler) findControllerNode(ctx context.Context, targetVersion strin
 	return "", "", fmt.Errorf("no controller node found with node-role.kubernetes.io/control-plane label")
 }
 
-func (r *Reconciler) areAllControlPlaneNodesUpgraded(ctx context.Context, targetVersion string) (bool, error) {
+func (r *Reconciler) areAllControlPlaneNodesUpgraded(ctx context.Context, targetVersion string, policy tupprv1alpha1.VersionComparisonSpec) (bool, error) {
 	nodeList := &corev1.NodeList{}
 	opts := []client.ListOption{
 		client.MatchingLabels{"node-role.kubernetes.io/control-plane": ""},
@@ -275,7 +282,7 @@ func (r *Reconciler) areAllControlPlaneNodesUpgraded(ctx context.Context, target
 	}
 
 	for _, node := range nodeList.Items {
-		if node.Status.NodeInfo.KubeletVersion != targetVersion {
+		if !versioncompare.Equivalent(node.Status.NodeInfo.KubeletVersion, targetVersion, policy) {
 			log.FromContext(ctx).V(1).Info("Control plane node not yet upgraded",
 				"node", node.Name,
 				"current", node.Status.NodeInfo.KubeletVersion,
@@ -287,7 +294,7 @@ func (r *Reconciler) areAllControlPlaneNodesUpgraded(ctx context.Context, target
 	return true, nil
 }
 
-func (r *Reconciler) areAllNodesUpgraded(ctx context.Context, targetVersion string) (bool, error) {
+func (r *Reconciler) areAllNodesUpgraded(ctx context.Context, targetVersion string, policy tupprv1alpha1.VersionComparisonSpec) (bool, error) {
 	nodeList := &corev1.NodeList{}
 	if err := r.List(ctx, nodeList); err != nil {
 		return false, fmt.Errorf("failed to list nodes: %w", err)
@@ -304,7 +311,7 @@ func (r *Reconciler) areAllNodesUpgraded(ctx context.Context, targetVersion stri
 		if current == "" {
 			continue
 		}
-		if current != targetVersion {
+		if !versioncompare.Equivalent(current, targetVersion, policy) {
 			log.FromContext(ctx).V(1).Info("Node not yet upgraded",
 				"node", node.Name,
 				"current", current,
