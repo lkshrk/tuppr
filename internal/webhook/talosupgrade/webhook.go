@@ -77,6 +77,10 @@ func (v *Validator) validate(ctx context.Context, t *tupprv1alpha1.TalosUpgrade)
 		return warnings, fmt.Errorf("invalid talos version: %w", err)
 	}
 
+	if err := validation.ValidateVersionComparison(t.Spec.Talos.VersionComparison); err != nil {
+		return warnings, fmt.Errorf("invalid talos versionComparison: %w", err)
+	}
+
 	if err := validation.ValidateHealthChecks(t.Spec.HealthChecks); err != nil {
 		return warnings, err
 	}
