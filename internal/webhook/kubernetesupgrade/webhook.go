@@ -67,6 +67,10 @@ func (v *Validator) validate(ctx context.Context, k *tupprv1alpha1.KubernetesUpg
 		return warnings, fmt.Errorf("invalid kubernetes version: %w", err)
 	}
 
+	if err := validation.ValidateVersionComparison(k.Spec.Kubernetes.VersionComparison); err != nil {
+		return warnings, fmt.Errorf("invalid kubernetes versionComparison: %w", err)
+	}
+
 	if err := validation.ValidateHealthChecks(k.Spec.HealthChecks); err != nil {
 		return warnings, err
 	}

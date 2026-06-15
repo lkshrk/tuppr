@@ -974,3 +974,32 @@ func TestTalosUpgrade_ValidateCreate_ParallelismWithNodeSelector(t *testing.T) {
 		t.Errorf("expected error about 2 matching nodes, got: %v", err)
 	}
 }
+
+func TestTalosUpgrade_ValidateCreate_ValidVersionComparison(t *testing.T) {
+	v := newTalosValidator(talosConfigSecretWithKey(testNamespace, validTalosConfig()))
+	tu := newTalosUpgrade("test", withTalosVersion("v1.11.0"))
+	tu.Spec.Talos.VersionComparison = tupprv1alpha1.VersionComparisonSpec{
+		Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix,
+	}
+
+	_, err := v.ValidateCreate(context.Background(), tu)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestTalosUpgrade_ValidateCreate_InvalidVersionComparison(t *testing.T) {
+	v := newTalosValidator(talosConfigSecretWithKey(testNamespace, validTalosConfig()))
+	tu := newTalosUpgrade("test", withTalosVersion("v1.11.0"))
+	tu.Spec.Talos.VersionComparison = tupprv1alpha1.VersionComparisonSpec{
+		Mode: tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix,
+	}
+
+	_, err := v.ValidateCreate(context.Background(), tu)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "versionComparison") {
+		t.Fatalf("expected versionComparison error, got %v", err)
+	}
+}

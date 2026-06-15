@@ -11,6 +11,11 @@ type TalosSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\-\.]+)?$`
 	Version string `json:"version,omitempty"`
+
+	// VersionComparison controls how reported Talos versions are compared with Version.
+	// It affects convergence checks only; upgrade images still use Version exactly.
+	// +optional
+	VersionComparison VersionComparisonSpec `json:"versionComparison,omitempty"`
 }
 
 // Policy defines upgrade behavior options

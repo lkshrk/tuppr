@@ -4836,6 +4836,30 @@ spec:
                       (e.g., "v1.11.0")
                     pattern: ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9\-\.]+)?$
                     type: string
+                  versionComparison:
+                    description: |-
+                      VersionComparison controls how reported Talos versions are compared with Version.
+                      It affects convergence checks only; upgrade images still use Version exactly.
+                    properties:
+                      mode:
+                        default: Exact
+                        description: |-
+                          Mode controls how Tuppr compares reported versions with the requested target.
+                          Defaults to Exact.
+                        enum:
+                        - Exact
+                        - IgnoreBuildMetadata
+                        - IgnoreCommitSuffix
+                        - IgnoreMatchingSuffix
+                        type: string
+                      suffixPattern:
+                        description: |-
+                          SuffixPattern is an anchored regular expression for a suffix to ignore.
+                          It is required when mode is IgnoreMatchingSuffix and rejected for built-in modes.
+                          The pattern is applied only to the suffix after the exact target prefix.
+                          Example: "-hcloud\\.[0-9]{8}$".
+                        type: string
+                    type: object
                 required:
                 - version
                 type: object

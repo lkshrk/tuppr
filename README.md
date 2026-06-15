@@ -485,7 +485,58 @@ kubectl edit kubernetesupgrade kubernetes
 kubectl delete talosupgrade talos && kubectl apply -f talos-upgrade.yaml
 ```
 
-If the upgrade keeps reaching `Completed` but a node never catches up to the target version, the controller marks the run `Failed` after 5 completion cycles with a message like _"Node(s) never converged to v1.34.0 after 5 completion cycles"_. Investigate the lagging node before retrying.
+### Version comparison policy
+
+Tuppr compares reported node and cluster versions with the requested target to decide whether an upgrade has converged. By default this comparison is exact.
+
+Some environments report a build or commit suffix even when the base version matches the requested target. Configure `versionComparison` when those suffixes should be ignored for convergence checks.
+
+Ignore SemVer build metadata:
+
+```yaml
+apiVersion: tuppr.home-operations.com/v1alpha1
+kind: KubernetesUpgrade
+metadata:
+  name: kubernetes
+spec:
+  kubernetes:
+    version: v1.34.0
+    versionComparison:
+      mode: IgnoreBuildMetadata
+```
+
+Ignore common Git commit suffixes:
+
+```yaml
+apiVersion: tuppr.home-operations.com/v1alpha1
+kind: KubernetesUpgrade
+metadata:
+  name: kubernetes
+spec:
+  kubernetes:
+    version: v1.34.0
+    versionComparison:
+      mode: IgnoreCommitSuffix
+```
+
+Use a custom anchored suffix pattern for uncommon vendor formats:
+
+```yaml
+apiVersion: tuppr.home-operations.com/v1alpha1
+kind: TalosUpgrade
+metadata:
+  name: talos
+spec:
+  talos:
+    version: v1.11.0
+    versionComparison:
+      mode: IgnoreMatchingSuffix
+      suffixPattern: "-hcloud\\.[0-9]{8}$"
+```
+
+`versionComparison` affects convergence checks only. Tuppr still uses the exact configured target version for upgrade commands, Talos installer image tags, status target fields, and history entries. `IgnoreMatchingSuffix` is an escape hatch; keep patterns narrow and anchored to the end with `$`.
+
+If the upgrade keeps reaching `Completed` but a node never catches up to the target version, the controller marks the run `Failed` after 5 completion cycles with a message like _"Node(s) never converged to v1.34.0 after 5 completion cycles"_. Investigate the lagging node before retrying. If reported versions include expected build or commit suffixes, configure `versionComparison` before retrying. Keep the default exact comparison when suffixes carry release semantics, such as prerelease identifiers.
 
 ### Troubleshooting
 

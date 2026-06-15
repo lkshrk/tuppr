@@ -546,3 +546,32 @@ func TestKubernetesUpgrade_ValidateCreate_MaintenanceWindowInvalidTimezone(t *te
 		t.Errorf("expected error to mention maintenanceWindow, got: %v", err)
 	}
 }
+
+func TestKubernetesUpgrade_ValidateCreate_ValidVersionComparison(t *testing.T) {
+	v := newK8sValidator(talosConfigSecret(testNamespace, validTalosConfig()))
+	ku := newKubernetesUpgrade("test", withKubernetesVersion("v1.34.0"))
+	ku.Spec.Kubernetes.VersionComparison = tupprv1alpha1.VersionComparisonSpec{
+		Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix,
+	}
+
+	_, err := v.ValidateCreate(context.Background(), ku)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestKubernetesUpgrade_ValidateCreate_InvalidVersionComparison(t *testing.T) {
+	v := newK8sValidator(talosConfigSecret(testNamespace, validTalosConfig()))
+	ku := newKubernetesUpgrade("test", withKubernetesVersion("v1.34.0"))
+	ku.Spec.Kubernetes.VersionComparison = tupprv1alpha1.VersionComparisonSpec{
+		Mode: tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix,
+	}
+
+	_, err := v.ValidateCreate(context.Background(), ku)
+	if err == nil {
+		t.Fatal("expected validation error")
+	}
+	if !strings.Contains(err.Error(), "versionComparison") {
+		t.Fatalf("expected versionComparison error, got %v", err)
+	}
+}

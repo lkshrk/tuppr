@@ -2043,6 +2043,7 @@ func TestNodeNeedsUpgrade(t *testing.T) {
 		nodeImage     string
 		globalVersion string
 		annotations   map[string]string
+		policy        tupprv1alpha1.VersionComparisonSpec
 		wantUpgrade   bool
 		wantError     bool
 	}{
@@ -2076,6 +2077,27 @@ func TestNodeNeedsUpgrade(t *testing.T) {
 			},
 			wantUpgrade: false,
 		},
+		{
+			name:          "Comparison: Commit suffix ignored -> No Upgrade",
+			nodeVersion:   fakeTalosVersion + "-deadbee",
+			globalVersion: fakeTalosVersion,
+			policy:        tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix},
+			wantUpgrade:   false,
+		},
+		{
+			name:          "Comparison: Uppercase commit suffix ignored -> No Upgrade",
+			nodeVersion:   fakeTalosVersion + "-DEADBEE",
+			globalVersion: fakeTalosVersion,
+			policy:        tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix},
+			wantUpgrade:   false,
+		},
+		{
+			name:          "Comparison: Prerelease suffix still drifts -> Upgrade",
+			nodeVersion:   fakeTalosVersion + "-rc.1",
+			globalVersion: fakeTalosVersion,
+			policy:        tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix},
+			wantUpgrade:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -2102,7 +2124,7 @@ func TestNodeNeedsUpgrade(t *testing.T) {
 
 			r.TalosClient = tc
 
-			gotUpgrade, err := r.nodeNeedsUpgrade(context.Background(), node, tt.globalVersion)
+			gotUpgrade, err := r.nodeNeedsUpgrade(context.Background(), node, tt.globalVersion, tt.policy)
 
 			if (err != nil) != tt.wantError {
 				t.Errorf("nodeNeedsUpgrade() error = %v, wantError %v", err, tt.wantError)
@@ -3844,6 +3866,35 @@ func TestTalosReconcile_CompletedStaysWhenNoDrift(t *testing.T) {
 	}
 	if len(updated.Status.CompletedNodes) != 1 || updated.Status.CompletedNodes[0] != fakeNodeA {
 		t.Fatalf("expected CompletedNodes preserved, got: %v", updated.Status.CompletedNodes)
+	}
+}
+
+func TestTalosReconcile_CompletedStaysWhenVersionSuffixEquivalent(t *testing.T) {
+	scheme := newTestScheme()
+	tu := newTalosUpgrade(testUpgradeName,
+		withFinalizer,
+		withPhase(tupprv1alpha1.JobPhaseCompleted),
+		withCompletedNodes(fakeNodeA),
+	)
+	tu.Spec.Talos.VersionComparison = tupprv1alpha1.VersionComparisonSpec{
+		Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix,
+	}
+	nodeA := newNode(fakeNodeA, testNodeIP1)
+	tc := &mockTalosClient{
+		nodeVersions: map[string]string{testNodeIP1: fakeTalosVersion + "-deadbee"},
+	}
+	cl := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(tu, nodeA).WithStatusSubresource(tu).Build()
+	r := newTalosReconciler(cl, scheme, tc, &mockHealthChecker{})
+
+	result := reconcileTalos(t, r, testUpgradeName)
+	if result.RequeueAfter != time.Hour {
+		t.Fatalf("expected 1h requeue when suffix-equivalent, got: %v", result.RequeueAfter)
+	}
+
+	updated := getTalosUpgrade(t, cl, testUpgradeName)
+	if updated.Status.Phase != tupprv1alpha1.JobPhaseCompleted {
+		t.Fatalf("expected phase to remain Completed, got: %s", updated.Status.Phase)
 	}
 }
 

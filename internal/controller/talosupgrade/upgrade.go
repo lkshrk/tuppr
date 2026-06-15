@@ -24,6 +24,7 @@ import (
 	"github.com/home-operations/tuppr/internal/controller/upgradeaudit"
 	"github.com/home-operations/tuppr/internal/metrics"
 	"github.com/home-operations/tuppr/internal/talos"
+	"github.com/home-operations/tuppr/internal/versioncompare"
 )
 
 func (r *Reconciler) processUpgrade(ctx context.Context, talosUpgrade *tupprv1alpha1.TalosUpgrade) (ctrl.Result, error) {
@@ -418,7 +419,7 @@ func (r *Reconciler) recordOutOfBandCompletedNodes(ctx context.Context, talosUpg
 			continue
 		}
 
-		needsUpgrade, err := r.nodeNeedsUpgrade(ctx, node, crdTargetVersion)
+		needsUpgrade, err := r.nodeNeedsUpgrade(ctx, node, crdTargetVersion, talosUpgrade.Spec.Talos.VersionComparison)
 		if err != nil {
 			return fmt.Errorf("check node %s: %w", node.Name, err)
 		}
@@ -478,7 +479,7 @@ func (r *Reconciler) findNextNodes(ctx context.Context, talosUpgrade *tupprv1alp
 			continue
 		}
 
-		needsUpgrade, err := r.nodeNeedsUpgrade(ctx, node, crdTargetVersion)
+		needsUpgrade, err := r.nodeNeedsUpgrade(ctx, node, crdTargetVersion, talosUpgrade.Spec.Talos.VersionComparison)
 		if err != nil {
 			logger.Error(err, "Failed to check if node needs upgrade", "node", node.Name)
 			return nil, fmt.Errorf("failed to check node %s: %w", node.Name, err)
@@ -539,7 +540,7 @@ func (r *Reconciler) getSortedNodes(ctx context.Context, nodeSelector *metav1.La
 	return nodes, nil
 }
 
-func (r *Reconciler) nodeNeedsUpgrade(ctx context.Context, node *corev1.Node, crdTargetVersion string) (bool, error) {
+func (r *Reconciler) nodeNeedsUpgrade(ctx context.Context, node *corev1.Node, crdTargetVersion string, policy tupprv1alpha1.VersionComparisonSpec) (bool, error) {
 	logger := log.FromContext(ctx)
 
 	nodeIP, err := nodeutil.GetNodeIP(node)
@@ -554,11 +555,12 @@ func (r *Reconciler) nodeNeedsUpgrade(ctx context.Context, node *corev1.Node, cr
 
 	targetVersion := r.getTargetVersion(node, crdTargetVersion)
 
-	if currentVersion != targetVersion {
+	if !versioncompare.Equivalent(currentVersion, targetVersion, policy) {
 		logger.V(1).Info("Node version mismatch detected",
 			"node", node.Name,
 			"current", currentVersion,
-			"target", targetVersion)
+			"target", targetVersion,
+			"comparisonMode", policy.Mode)
 		return true, nil
 	}
 
@@ -711,7 +713,7 @@ func (r *Reconciler) verifyNodeUpgrade(ctx context.Context, talosUpgrade *tupprv
 		return false, fmt.Errorf("failed to get current version from Talos for %s: %w", nodeName, err)
 	}
 
-	if currentVersion != targetVersion {
+	if !versioncompare.Equivalent(currentVersion, targetVersion, talosUpgrade.Spec.Talos.VersionComparison) {
 		return false, fmt.Errorf("node %s version mismatch: current=%s, target=%s",
 			nodeName, currentVersion, targetVersion)
 	}

@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -126,6 +127,38 @@ func ValidateVersionFormat(version string) error {
 		return fmt.Errorf("version '%s' invalid. Must be 'vX.Y.Z' or 'vX.Y.Z-suffix'", version)
 	}
 	return nil
+}
+
+// ValidateVersionComparison validates comparison policy fields that cannot be
+// fully expressed by CRD enum validation.
+func ValidateVersionComparison(policy tupprv1alpha1.VersionComparisonSpec) error {
+	mode := policy.Mode
+	if mode == "" {
+		mode = tupprv1alpha1.VersionComparisonExact
+	}
+
+	switch mode {
+	case tupprv1alpha1.VersionComparisonExact,
+		tupprv1alpha1.VersionComparisonIgnoreBuildMetadata,
+		tupprv1alpha1.VersionComparisonIgnoreCommitSuffix:
+		if policy.SuffixPattern != "" {
+			return fmt.Errorf("versionComparison.suffixPattern is only supported when mode is IgnoreMatchingSuffix")
+		}
+		return nil
+	case tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix:
+		if policy.SuffixPattern == "" {
+			return fmt.Errorf("versionComparison.suffixPattern is required when mode is IgnoreMatchingSuffix")
+		}
+		if !strings.HasSuffix(policy.SuffixPattern, "$") {
+			return fmt.Errorf("versionComparison.suffixPattern must be anchored to the end with '$'")
+		}
+		if _, err := regexp.Compile(policy.SuffixPattern); err != nil {
+			return fmt.Errorf("invalid versionComparison.suffixPattern: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported versionComparison.mode %q", policy.Mode)
+	}
 }
 
 // ValidateSingleton ensures only one instance of the specific list type exists

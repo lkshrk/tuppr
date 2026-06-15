@@ -27,6 +27,7 @@ import (
 
 const (
 	fakeCrtl       = "ctrl-1"
+	fakeCrtl2      = "ctrl-2"
 	testNamespace  = "default"
 	testNodeIP     = "10.0.0.1"
 	testJobNameStr = "test-upgrade-ctrl-1-abcd1234"
@@ -233,7 +234,7 @@ func TestK8sReconcile_PartialUpgrade_PreventsCompletion(t *testing.T) {
 	// Node A is upgraded
 	nodeA := newControllerNodeWithVersion("ctrl-1", testNodeIP, testK8sVersion)
 	// Node B is still on old version
-	nodeB := newControllerNodeWithVersion("ctrl-2", "10.0.0.2", testV1330)
+	nodeB := newControllerNodeWithVersion(fakeCrtl2, "10.0.0.2", testV1330)
 
 	vg := &mockVersionGetter{version: testK8sVersion}
 
@@ -255,7 +256,7 @@ func TestK8sReconcile_PartialUpgrade_PreventsCompletion(t *testing.T) {
 		t.Fatal("Regression! Controller marked upgrade as Completed despite Node B being old version")
 	}
 
-	if updated.Status.ControllerNode != "ctrl-2" {
+	if updated.Status.ControllerNode != fakeCrtl2 {
 		t.Fatalf("expected controller to target ctrl-2, got %s", updated.Status.ControllerNode)
 	}
 }
@@ -691,7 +692,7 @@ func TestK8sReconcile_JobSuccess_PartialUpgrade_ContinuesToNextNode(t *testing.T
 		withK8sPhase(tupprv1alpha1.JobPhaseUpgrading),
 	)
 	nodeA := newControllerNodeWithVersion("ctrl-1", testNodeIP, testK8sVersion)
-	nodeB := newControllerNodeWithVersion("ctrl-2", "10.0.0.2", testV1330)
+	nodeB := newControllerNodeWithVersion(fakeCrtl2, "10.0.0.2", testV1330)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testJobNameStr,
@@ -730,7 +731,7 @@ func TestK8sReconcile_JobSuccess_PartialUpgrade_ContinuesToNextNode(t *testing.T
 		t.Fatalf("expected 30s requeue after creating job for ctrl-2, got: %v", result.RequeueAfter)
 	}
 	updated = getK8sUpgrade(t, cl, "test-upgrade")
-	if updated.Status.ControllerNode != "ctrl-2" {
+	if updated.Status.ControllerNode != fakeCrtl2 {
 		t.Fatalf("expected next job targeting ctrl-2, got: %s", updated.Status.ControllerNode)
 	}
 }
@@ -828,7 +829,7 @@ func TestK8sReconcile_InProgressBypassesCoordination(t *testing.T) {
 func TestK8sFindControllerNode(t *testing.T) {
 	scheme := newTestScheme()
 	ctrlNode := newControllerNodeWithVersion(fakeCrtl, testNodeIP, testV1330)
-	upgradedNode := newControllerNodeWithVersion("ctrl-2", "10.0.0.3", testK8sVersion)
+	upgradedNode := newControllerNodeWithVersion(fakeCrtl2, "10.0.0.3", testK8sVersion)
 
 	workerNode := newWorkerNode("10.0.0.2")
 
@@ -837,7 +838,7 @@ func TestK8sFindControllerNode(t *testing.T) {
 
 	r := newK8sReconciler(cl, &mockVersionGetter{}, &mockTalosClient{}, &mockHealthChecker{})
 
-	name, ip, err := r.findControllerNode(context.Background(), testK8sVersion)
+	name, ip, err := r.findControllerNode(context.Background(), testK8sVersion, tupprv1alpha1.VersionComparisonSpec{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -853,7 +854,7 @@ func TestK8sFindControllerNode_NoControlPlane(t *testing.T) {
 		WithObjects(newWorkerNode("10.0.0.2")).Build()
 	r := newK8sReconciler(cl, &mockVersionGetter{}, &mockTalosClient{}, &mockHealthChecker{})
 
-	_, _, err := r.findControllerNode(context.Background(), testK8sVersion)
+	_, _, err := r.findControllerNode(context.Background(), testK8sVersion, tupprv1alpha1.VersionComparisonSpec{})
 	if err == nil {
 		t.Fatal("expected error when no control-plane node")
 	}
@@ -1039,7 +1040,7 @@ func TestK8sReconcile_CompletedReentersOnLaggingNode(t *testing.T) {
 		withK8sPhase(tupprv1alpha1.JobPhaseCompleted),
 	)
 	nodeAtTarget := newControllerNodeWithVersion("ctrl-1", testNodeIP, testK8sVersion)
-	nodeLagging := newControllerNodeWithVersion("ctrl-2", "10.0.0.2", testV1330)
+	nodeLagging := newControllerNodeWithVersion(fakeCrtl2, "10.0.0.2", testV1330)
 
 	cl := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(ku, nodeAtTarget, nodeLagging).WithStatusSubresource(ku).Build()
@@ -1076,6 +1077,56 @@ func TestK8sReconcile_CompletedStaysWhenNoDrift(t *testing.T) {
 	updated := getK8sUpgrade(t, cl, "test-upgrade")
 	if updated.Status.Phase != tupprv1alpha1.JobPhaseCompleted {
 		t.Fatalf("expected phase to remain Completed when no drift, got: %s", updated.Status.Phase)
+	}
+}
+
+func TestK8sReconcile_CompletedStaysWhenVersionSuffixEquivalent(t *testing.T) {
+	scheme := newTestScheme()
+	ku := newKubernetesUpgrade("test-upgrade",
+		withK8sFinalizer,
+		withK8sPhase(tupprv1alpha1.JobPhaseCompleted),
+	)
+	ku.Spec.Kubernetes.VersionComparison = tupprv1alpha1.VersionComparisonSpec{
+		Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix,
+	}
+	cp := newControllerNodeWithVersion("ctrl-1", testNodeIP, testK8sVersion+"-deadbee")
+	worker := newWorkerNode("10.0.0.5")
+	worker.Status.NodeInfo.KubeletVersion = testK8sVersion + "-DEADBEE"
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(ku, cp, worker).WithStatusSubresource(ku).Build()
+	r := newK8sReconciler(cl, &mockVersionGetter{version: testK8sVersion + "-deadbee"}, &mockTalosClient{}, &mockHealthChecker{})
+
+	result := reconcileK8s(t, r, "test-upgrade")
+	if result.RequeueAfter != time.Hour {
+		t.Fatalf("expected 1h requeue when suffix-equivalent, got: %v", result.RequeueAfter)
+	}
+
+	updated := getK8sUpgrade(t, cl, "test-upgrade")
+	if updated.Status.Phase != tupprv1alpha1.JobPhaseCompleted {
+		t.Fatalf("expected phase to remain Completed, got: %s", updated.Status.Phase)
+	}
+}
+
+func TestK8sFindControllerNode_SkipsSuffixEquivalentNode(t *testing.T) {
+	scheme := newTestScheme()
+	suffixEquivalent := newControllerNodeWithVersion(fakeCrtl, testNodeIP, testK8sVersion+"-deadbee")
+	lagging := newControllerNodeWithVersion(fakeCrtl2, "10.0.0.3", testV1330)
+
+	cl := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(suffixEquivalent, lagging).Build()
+	r := newK8sReconciler(cl, &mockVersionGetter{}, &mockTalosClient{}, &mockHealthChecker{})
+
+	name, ip, err := r.findControllerNode(
+		context.Background(),
+		testK8sVersion,
+		tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if name != fakeCrtl2 || ip != "10.0.0.3" {
+		t.Fatalf("expected to pick lagging node ctrl-2, got: %s/%s", name, ip)
 	}
 }
 
@@ -1238,7 +1289,7 @@ func TestK8sFindControllerNode_FallbackWhenAllControlPlanesAtTarget(t *testing.T
 		WithObjects(cpAtTarget, workerLagging).Build()
 	r := newK8sReconciler(cl, &mockVersionGetter{}, &mockTalosClient{}, &mockHealthChecker{})
 
-	name, ip, err := r.findControllerNode(context.Background(), testK8sVersion)
+	name, ip, err := r.findControllerNode(context.Background(), testK8sVersion, tupprv1alpha1.VersionComparisonSpec{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

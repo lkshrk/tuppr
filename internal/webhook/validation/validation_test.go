@@ -518,3 +518,77 @@ func TestValidateMaintenanceWindows_DurationBoundaries(t *testing.T) {
 		t.Fatalf("expected 1 warning for short duration, got %d", len(warnings))
 	}
 }
+
+func TestValidateVersionComparison(t *testing.T) {
+	g := NewWithT(t)
+
+	tests := []struct {
+		name        string
+		policy      tupprv1alpha1.VersionComparisonSpec
+		wantErr     bool
+		errContains string
+	}{
+		{name: "empty defaults to exact"},
+		{name: "explicit exact", policy: tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonExact}},
+		{name: "ignore build metadata", policy: tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreBuildMetadata}},
+		{name: "ignore commit suffix", policy: tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreCommitSuffix}},
+		{
+			name: "ignore matching suffix",
+			policy: tupprv1alpha1.VersionComparisonSpec{
+				Mode:          tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix,
+				SuffixPattern: "-hcloud\\.[0-9]{8}$",
+			},
+		},
+		{
+			name:        "unknown mode",
+			policy:      tupprv1alpha1.VersionComparisonSpec{Mode: "Loose"},
+			wantErr:     true,
+			errContains: "unsupported versionComparison.mode",
+		},
+		{
+			name: "built in mode rejects suffixPattern",
+			policy: tupprv1alpha1.VersionComparisonSpec{
+				Mode:          tupprv1alpha1.VersionComparisonIgnoreCommitSuffix,
+				SuffixPattern: "-[a-f0-9]{7,40}$",
+			},
+			wantErr:     true,
+			errContains: "suffixPattern is only supported",
+		},
+		{
+			name:        "matching suffix requires pattern",
+			policy:      tupprv1alpha1.VersionComparisonSpec{Mode: tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix},
+			wantErr:     true,
+			errContains: "suffixPattern is required",
+		},
+		{
+			name: "matching suffix rejects unanchored pattern",
+			policy: tupprv1alpha1.VersionComparisonSpec{
+				Mode:          tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix,
+				SuffixPattern: "-hcloud\\.[0-9]{8}",
+			},
+			wantErr:     true,
+			errContains: "must be anchored",
+		},
+		{
+			name: "matching suffix rejects invalid regex",
+			policy: tupprv1alpha1.VersionComparisonSpec{
+				Mode:          tupprv1alpha1.VersionComparisonIgnoreMatchingSuffix,
+				SuffixPattern: "[$",
+			},
+			wantErr:     true,
+			errContains: "invalid versionComparison.suffixPattern",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateVersionComparison(tt.policy)
+			if tt.wantErr {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring(tt.errContains))
+				return
+			}
+			g.Expect(err).NotTo(HaveOccurred())
+		})
+	}
+}

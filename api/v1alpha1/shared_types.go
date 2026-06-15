@@ -70,6 +70,34 @@ type TalosctlSpec struct {
 	Image TalosctlImageSpec `json:"image,omitempty"`
 }
 
+// VersionComparisonMode controls how reported versions are compared with the requested target.
+// +kubebuilder:validation:Enum=Exact;IgnoreBuildMetadata;IgnoreCommitSuffix;IgnoreMatchingSuffix
+type VersionComparisonMode string
+
+const (
+	VersionComparisonExact                VersionComparisonMode = "Exact"
+	VersionComparisonIgnoreBuildMetadata  VersionComparisonMode = "IgnoreBuildMetadata"
+	VersionComparisonIgnoreCommitSuffix   VersionComparisonMode = "IgnoreCommitSuffix"
+	VersionComparisonIgnoreMatchingSuffix VersionComparisonMode = "IgnoreMatchingSuffix"
+)
+
+// VersionComparisonSpec controls version equivalence for convergence checks only.
+type VersionComparisonSpec struct {
+	// Mode controls how Tuppr compares reported versions with the requested target.
+	// Defaults to Exact.
+	// +kubebuilder:validation:Enum=Exact;IgnoreBuildMetadata;IgnoreCommitSuffix;IgnoreMatchingSuffix
+	// +kubebuilder:default=Exact
+	// +optional
+	Mode VersionComparisonMode `json:"mode,omitempty"`
+
+	// SuffixPattern is an anchored regular expression for a suffix to ignore.
+	// It is required when mode is IgnoreMatchingSuffix and rejected for built-in modes.
+	// The pattern is applied only to the suffix after the exact target prefix.
+	// Example: "-hcloud\\.[0-9]{8}$".
+	// +optional
+	SuffixPattern string `json:"suffixPattern,omitempty"`
+}
+
 type MaintenanceSpec struct {
 	// +optional
 	// +kubebuilder:validation:MinItems=1
